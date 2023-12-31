@@ -42,7 +42,7 @@ def StringGen():
     for value in result.get():
         for v in value:
             StringDB.append(v)
-    file=open("output.txt","w")
+    file=open(Util.Cwd+"/Storage/output.txt","w")
     for entry in StringDB:
         try:
             file.write(str(" // ".join(entry))+"\n")

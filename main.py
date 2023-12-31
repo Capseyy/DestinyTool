@@ -28,5 +28,9 @@ global CWD,PackageCache,H64Data
 
 if __name__ == "__main__":
     Util.init()
+    try:
+        os.makedirs(Util.Cwd+"/Storage")
+    except FileExistsError:
+        u=1
     root=Window(Util.Cwd,Util.PackageCache)
     root.MainWindow()
