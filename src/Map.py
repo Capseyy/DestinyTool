@@ -4,7 +4,7 @@ from bytechomp import Reader, dataclass, Annotated, serialize
 import multiprocessing as mp
 from common import *
 from Strings import ProcessStrings
-import Util
+import Util, Havok
 from bytechomp.datatypes import (
     U8,  # 8-bit unsigned integer
     U16,  # 16-bit unsigned integer
@@ -22,15 +22,22 @@ from bytechomp.datatypes import (
 
 def ExtractLoadzoneEntities(MapContainer):
     return {},{}
-def OutputDataTable(Tag,ActivityDict,PackageCache,Cwd,H64Data):
+
+def OutputDataTable(Data,ActivityDict,PackageCache,Cwd,H64Data):
     OutputtedEntities=[]
     WorldIdMap={}
+    Tag=Data[0]
+    GlobalWorldID=Data[1]
+    GlobalRotation=Data[2]
+    GlobalTranslation=Data[3]
     SMapBuffer=Tag.GetData(PackageCache)
     reader = Reader[SMapDataTable]().allocate()
     reader.feed(SMapBuffer.read(SMapDataTable.Length))
     SMapHeader = reader.build()
     MapEntries=SMapHeader.InstanceTable.ReadStruct(SMapBuffer,SMapDataEntry,0x10)
     for Entry in MapEntries:
+        if Entry.WorldID == 18446744073709551615: #0xfffffffffffff
+            Entry.WorldID = GlobalWorldID
         try:
             Name=ActivityDict[Entry.WorldID]
         except KeyError:
@@ -40,9 +47,28 @@ def OutputDataTable(Tag,ActivityDict,PackageCache,Cwd,H64Data):
         Outfile=open(Cwd+"/Maps/Instances/"+EntityHash+".txt","a")
         Outfile.write(OutputString)
         OutputtedEntities.append(Entry.Entity.To32(H64Data))
+        Outfile.close()
         WorldIdMap[Entry.WorldID] = [Entry.Rotation,Entry.Translation]
-    return OutputtedEntities,WorldIdMap
+        if Entry.ExtraResource.offset != 0:
+            ExtraResourceType=Entry.ExtraResource.GetType(SMapBuffer,Entry.Start+0x78)
+            if ExtraResourceType == 0x80809121:   #HavokFile
+                HavokResource=Entry.ExtraResource.ReadStruct(SMapBuffer,Unk80809121,Entry.Start+0x78)
+                HavokData=HavokResource.HavokTag.GetData(PackageCache)
+                HavokHash=binascii.hexlify(bytes(gf.hex_to_little_endian(str(hex(HavokResource.HavokTag.Hash))[2:]))).decode('utf-8')
+                Havok.ExtractHxk(HavokData,HavokHash)
+                Outfile=open(Cwd+"/Maps/Instances/"+HavokHash+".txt","a")
+                Outfile.write(OutputString)
+                Outfile.close()
 
+
+    return [OutputtedEntities,WorldIdMap]
+
+@dataclass
+class Unk80809121:
+    Length = 0x20
+    Unk00: Annotated[list[U32], 4]
+    HavokTag: TagHash
+    Unk14: U32
 
 
 @dataclass

@@ -96,6 +96,9 @@ def Hex_String(Num):
 def FNVString(fnv_string):
     return fnvhash.fnv1_32(fnv_string.encode())
 
+
+def Flip(Hash):
+    return binascii.hexlify(bytes(hex_to_little_endian(Hash))).decode('utf-8')
 def binary_search_single(arr, x):
     low = 0
     high = len(arr) - 1

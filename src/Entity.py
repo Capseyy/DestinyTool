@@ -4,11 +4,12 @@ from bytechomp import Reader, dataclass, Annotated, serialize
 import multiprocessing as mp
 from common import *
 from Strings import ProcessStrings
-from Model import VertexBuffer,IndexBuffer,UVBuffer
+from Model import VertexHeader,IndexHeader
 temp=os.getcwd()
 temp=temp.split("\\")
 output="/".join(temp[:len(temp)])
 sys.path.append(output+"/ThirdParty")
+import fbx
 from fbx import FbxManager
 import FbxCommon
 
@@ -27,30 +28,104 @@ from bytechomp.datatypes import (
 )
 
 def ExtractEntity(Tag,PackageCache):
-    EntityBuffer=Tag.GetData(PackageCache)
-    reader = Reader[SEntity]().allocate()
-    reader.feed(EntityBuffer.read(SEntity.Length))
-    Entity = reader.build()
-    EntityResources=Entity.ResourceTable.ReadStruct(Entity,Unk80809ACD,0x10)
-    HasMesh=False
-    for EntityResource in EntityResource:
-        ResourceData=EntityResource.ResourceTag.GetData(PackageCache)
-        reader = Reader[SEntityResource]().allocate()
-        reader.feed(ResourceData.read(SEntityResource.Length))
-        EntityResourceObject = reader.build()
-        ResourceType18=EntityResourceObject.Resource0x18.GetType(ResourceData,0x18)
-        if ResourceType18 == 0x80806d8f: #model mesh
-            ModelResource=EntityResourceObject.Resource0x18.ReadStruct(ResourceData,Unk80806D8F,0x18)
-            ModelResourceData=ResourceData
-            HasMesh = True
-    if HasMesh == True:
-        ExternalMaterialMaps=ModelResource.ExternalMaterialMapTable.ReadStruct(ModelResourceData,SExternalMaterialMapEntry,ModelResource.Start+0x3C8)
-        ExternalMaterials=ModelResource.ExternalMaterialMapTable.ReadStruct(ModelResourceData,Unk80800014,ModelResource.Start+0x408)
-        EntityModelBuffer=ModelResource.MeshFile.GetData(PackageCache)
-        reader = Reader[SEntityModel]().allocate()
-        reader.feed(EntityModelBuffer.read(SEntityModel.Length))
-        EntityModel = reader.build()
-        Meshes = EntityModel.ModelMeshes.ReadStruct(EntityModelBuffer,SEntityModelMesh,0x18)
+    EntityString=str(hex(Tag.Hash))[2:]
+    EntityString=binascii.hexlify(bytes(gf.hex_to_little_endian(EntityString))).decode('utf-8')
+    if os.path.isfile(output+"\\Maps\\Entities\\"+EntityString+".fbx") == False:
+        EntityBuffer=Tag.GetData(PackageCache)
+        reader = Reader[SEntity]().allocate()
+        reader.feed(EntityBuffer.read(SEntity.Length))
+        Entity = reader.build()
+        EntityResources=Entity.ResourceTable.ReadStruct(EntityBuffer,Unk80809ACD,0x10)
+        HasMesh=False
+        for EntityResource in EntityResources:
+            ResourceData=EntityResource.ResourceTag.GetData(PackageCache)
+            reader = Reader[SEntityResource]().allocate()
+            reader.feed(ResourceData.read(SEntityResource.Length))
+            EntityResourceObject = reader.build()
+            ResourceType18=EntityResourceObject.Resource0x18.GetType(ResourceData,0x18)
+            if ResourceType18 == 0x80806d8f: #model mesh
+                ModelResource=EntityResourceObject.Resource0x18.ReadStruct(ResourceData,Unk80806D8F,0x18)
+                ModelResourceData=ResourceData
+                HasMesh = True
+        if HasMesh == True:
+            ExternalMaterialMaps=ModelResource.ExternalMaterialMapTable.ReadStruct(ModelResourceData,SExternalMaterialMapEntry,ModelResource.Start+0x3C8)
+            ExternalMaterials=ModelResource.ExternalMaterials.ReadStruct(ModelResourceData,Unk80800014,ModelResource.Start+0x408)
+            EntityModelBuffer=ModelResource.MeshFile.GetData(PackageCache)
+            reader = Reader[SEntityModel]().allocate()
+            reader.feed(EntityModelBuffer.read(SEntityModel.Length))
+            EntityModel = reader.build()
+            Meshes = EntityModel.ModelMeshes.ReadStruct(EntityModelBuffer,SEntityModelMesh,0x18)
+            MeshIndex=0
+            PartIndex=0
+            memory_manager = fbx.FbxManager.Create()
+            scene = fbx.FbxScene.Create(memory_manager, '')
+            MeshScale=EntityModel.ModelScale.x
+            for Mesh in Meshes:
+                Parts = Mesh.PartsTable.ReadStruct(EntityModelBuffer,SEntityModelMeshParts,Mesh.Start+0x28)
+                VertexHeaderBuffer=Mesh.VertexPositionBuffer.GetData(PackageCache)
+                reader = Reader[VertexHeader]().allocate()
+                reader.feed(VertexHeaderBuffer.read(VertexHeader.Length))
+                VertexHead = reader.build()
+                VertexHeaderBuffer=Mesh.IndexBuffer.GetData(PackageCache)
+                reader = Reader[IndexHeader]().allocate()
+                reader.feed(VertexHeaderBuffer.read(IndexHeader.Length))
+                IndexHead = reader.build()
+                VertexHead.Buffer=Mesh.VertexPositionBuffer.GetReferenceData(PackageCache)
+                IndexHead.Buffer=Mesh.IndexBuffer.GetReferenceData(PackageCache)
+                for Part in Parts:
+                    MappingDict={}
+                    if Part.ELodCatagory > 3:
+                        continue
+                    Faces=IndexHead.ReadFaces(Part.IndexCount,Part.IndexOffset,Part.PrimitiveType)
+                    FaceDict={}
+                    count=0
+                    for Entry in Faces:
+                        for Val in Entry:     #cheap to remove dupes
+                            FaceDict[Val] = count
+                            count+=1
+                    Verts=VertexHead.GetUsedVerts(FaceDict)
+                    count=0
+                    my_mesh = fbx.FbxMesh.Create(scene, str(EntityString+"_"+str(MeshIndex)+"_"+str(PartIndex)))
+                    for Number,Vector in Verts.items():
+                        MappingDict[Number] = count
+                        v = fbx.FbxVector4((Vector.x*MeshScale)+EntityModel.ModelTranslation.x, (Vector.y*MeshScale)+EntityModel.ModelTranslation.y, (Vector.z*MeshScale)+EntityModel.ModelTranslation.z)
+                        my_mesh.SetControlPointAt( v, count )
+                        count+=1
+                    for Face in Faces:
+                        my_mesh.BeginPolygon()
+                        vertex_index = MappingDict[Face[0]]
+                        my_mesh.AddPolygon(vertex_index)
+                        vertex_index = MappingDict[Face[1]]
+                        my_mesh.AddPolygon(vertex_index)
+                        vertex_index = MappingDict[Face[2]]
+                        my_mesh.AddPolygon(vertex_index)
+                        my_mesh.EndPolygon()
+                    cubeLocation = (0, 0, 0)
+                    cubeScale    = (1, 1, 1)
+                    newNode = addNode(scene, str(EntityString+"_"+str(MeshIndex)+"_"+str(PartIndex)), location = cubeLocation)
+                    rootNode = scene.GetRootNode()
+                    rootNode.AddChild( newNode )
+                    newNode.SetNodeAttribute( my_mesh )
+                    newNode.ScalingActive.Set(1)
+
+                    PartIndex+=1
+                MeshIndex+=1
+            filename = output+"\\Maps\\Entities\\"+EntityString+".fbx"
+            FbxCommon.SaveScene(memory_manager, scene, filename)
+            memory_manager.Destroy()
+
+
+            
+
+
+def addNode( pScene, nodeName, **kwargs ):
+    # Obtain a reference to the scene's root node.
+    #scaling = kwargs["scaling"]
+    location = kwargs["location"]
+    newNode = fbx.FbxNode.Create( pScene, nodeName )
+    newNode.LclScaling.Set(fbx.FbxDouble3(1, 1, 1))
+    newNode.LclTranslation.Set(fbx.FbxDouble3(location[0]*1, location[1]*1, location[2]*1))
+    return newNode           
 
 
 
@@ -70,13 +145,13 @@ class SEntityModel:
 @dataclass
 class SEntityModelMesh:
     Length = 0x80
-    VertexPositionBuffer: VertexBuffer
-    UVBuffer: UVBuffer
-    WeightBuffer: VertexBuffer
-    Unk0C: TagHash
-    IndexBuffer: IndexError
-    ColorBuffer: VertexBuffer
-    SPSBukker: VertexBuffer #Single Pass Skinning
+    VertexPositionBuffer: TagHash
+    UVBuffer: TagHash
+    WeightBuffer: TagHash
+    Unk0C: U32
+    IndexBuffer: TagHash
+    ColorBuffer: TagHash
+    SPSBukker: TagHash #Single Pass Skinning
     Unk1C: U32
     PartsTable: TablePointer2
 
@@ -121,7 +196,7 @@ class Unk80806D8F:  #Entity Mesh Resource
     Length = 0x450
     Unk00: Annotated[list[U32], 137]
     MeshFile: TagHash #0x224
-    Unk228: Annotated[list[U32], 98]
+    Unk228: Annotated[list[U32], 102]
     ExternalMaterialMapTable: TablePointer2
     Unk3D0: Annotated[list[U32], 8]
     Unk3F0: TablePointer2

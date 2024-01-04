@@ -1,13 +1,17 @@
 from tkinter import *
 from tkinter import ttk
 from functools import partial
-from Strings import StringGen
+from Strings import StringGen, FnvGen
 from Activity import ActivityListGen, GetEncounterList, ExtractEncounter
-import os,sys,Util
-
+import os,sys,Util,binascii,gf,ast,common,Pickle
+from Entity import ExtractEntity
+from common import ParseTag
+from Package import DumpTag
 
 class Window:
     def __init__(self,CWD,PkgCache):
+        self.GlobalStringDict=Pickle.GetStringDict(CWD)
+        self.FnvDict=Pickle.GetFnvDict(CWD)
         self.root=Tk()
         self.root.title("The Tech")
         self.root.geometry("1200x600")
@@ -15,6 +19,7 @@ class Window:
         self.DevNameDict={}
         self.ActList={}
         self.PackageCache=PkgCache
+        
     
     def MainWindow(self):
         print(self.CWD)
@@ -23,8 +28,10 @@ class Window:
         bg = PhotoImage(file = os.getcwd()+"/ThirdParty/destiny.png")
         label1 = Label(self.root, image = bg)
         label1.pack()
-        String = Button(self.root, text="Generate String DB", height=1, width=15,command=partial(StringGen))
+        String = Button(self.root, text="Generate String DB", height=1, width=15,command=partial(CollectStrings,self))
         String.place(x=500, y=125)
+        Fnv = Button(self.root, text="Generate FNV DB(long)", height=1, width=15,command=partial(CollectFnvs,self))
+        Fnv.place(x=650, y=125)
         Activity = Button(self.root, text="Activites", height=1, width=15,command=partial(ActivityListGen,self))
         Activity.place(x=500, y=225)
         Quit = Button(self.root, text="Quit", height=1, width=15,command=partial(QuitOut))
@@ -36,6 +43,7 @@ class Window:
         self.root.mainloop()
     
     def DebugMenu(self):
+        global lst,combo_box
         lst=[]
         for widget in self.root.winfo_children():
             widget.destroy()
@@ -44,8 +52,16 @@ class Window:
         label1.pack()
         combo_box = ttk.Combobox(self.root,height=20, width=40)
         combo_box['values'] = []
-        combo_box.bind('<KeyRelease>', self.check_input)
+        combo_box.bind('<KeyRelease>', check_input)
         combo_box.place(x=500, y=125)
+        Activity = Button(self.root, text="Extract Entity", height=1, width=15,command=partial(DumpEntity,combo_box,self.PackageCache))
+        Activity.place(x=500, y=175)
+        TagParse = Button(self.root, text="Parse Tag", height=1, width=15,command=partial(ParseTag,combo_box,self.PackageCache,self.GlobalStringDict,self.FnvDict))
+        TagParse.place(x=600, y=175)
+        TagParse = Button(self.root, text="Dump Tag", height=1, width=15,command=partial(DumpTag,combo_box,self.PackageCache))
+        TagParse.place(x=600, y=225)
+        EntrySearch = Button(self.root, text="Search Bungie Files", height=1, width=20,command=partial(common.SearchVal,combo_box))
+        EntrySearch.place(x=500, y=375)
         Back = Button(self.root, text="Back", height=1, width=15,command=partial(self.MainWindow))
         Back.place(x=10, y=10)
         Clear = Button(self.root, text="Clear Audio", height=1, width=15,command=partial(Util.ClearAudio,self.CWD))
@@ -123,6 +139,18 @@ def check_input(event):
 
 def QuitOut():
     sys.exit()
-
+def CollectFnvs(Window):
+    FnvDict=FnvGen()
+    Window.FnvDict=FnvDict
+    Window.MainWindow()
+def CollectStrings(Window):
+    GlobalStringDict=StringGen()
+    Window.GlobalStringDict=GlobalStringDict
+    Window.MainWindow()
+def DumpEntity(combo_box,PackageCache):
+    string=combo_box.get()
+    Hash=ast.literal_eval("0x"+binascii.hexlify(bytes(gf.hex_to_little_endian(string))).decode('utf-8'))
+    Tag=common.TagHash(Hash)
+    ExtractEntity(Tag,PackageCache)
 def dummy():
     u=1

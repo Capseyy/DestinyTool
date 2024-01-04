@@ -1,7 +1,7 @@
 from bytechomp import Reader, dataclass, Annotated, serialize
 import multiprocessing as mp
 from dataclasses import dataclass, fields, field
-import gf,Package,io,binascii
+import gf,Package,io,binascii,ast,SQL
 from bytechomp.datatypes import (
     U8,  # 8-bit unsigned integer
     U16,  # 16-bit unsigned integer
@@ -17,6 +17,51 @@ from bytechomp.datatypes import (
 )
 import Util
 
+def ParseTag(combo_box,PackageCache,GlobalStringDict,FnvDict):
+    Hash=combo_box.get()
+    Tag=TagHash(ast.literal_eval("0x"+gf.Flip(Hash)))
+    Data=Tag.GetData(PackageCache)
+    Length = len(Data.read())//4
+    for i in range(Length):
+        Data.seek(i*4)
+        Hash=int.from_bytes(Data.read(4),"little")
+        try:
+            print("STR:",GlobalStringDict[Hash],"at",str(hex(i*4)))
+        except KeyError:
+            u=1
+        try:
+            print("Fnv:",FnvDict[Hash],"at",str(hex(i*4)))
+        except KeyError:
+            u=1
+
+
+def SearchVal(combo_box):
+    Value=combo_box.get()
+    Value="".join(Value.split(" "))
+    if (len(Value) == 8) or (len(Value) == 16):
+        t_pool = mp.Pool(mp.cpu_count())
+        import Util
+        FnvDict={}
+        _args = [(Ent[1],Ent[0],Value) for Ent in Package.GetAllBungieFiles(Util.PackageCache,Util.path)]
+        result=t_pool.starmap_async(SearchEntry, _args)
+        result.get()
+
+def SearchEntry(Buffer,Name,Value):
+    BufferData=binascii.hexlify(bytes(Buffer.read())).decode()
+    temp=[BufferData[i:i+8] for i in range(0, len(BufferData), 8)]
+    for i in range(len(temp)):
+        if len(Value) == 8:
+            if str(temp[i]) == str((Value).lower()):
+                print("Found in entry: "+Name+" @"+str(hex(i*4)))
+        elif len(Value) == 16:
+            try:
+                temp[i]+temp[i+1]
+            except IndexError:
+                break
+            if str(temp[i]+temp[i+1]) == str((Value.lower())):
+                print("Found in entry: "+Name+" @"+str(hex(i*4)))
+        else:
+            print("Unsupported search criteria")
 def ReadDevString(Buffer):
     Start=Buffer.tell()
     Buffer.seek(Start)
@@ -77,7 +122,13 @@ class Vector4:
     def ToTrans(self):
         return str(self.x)+","+str(self.y)+","+str(self.z)+","+str(self.w)
     def ToRot(self):
-        return str(self.w)+","+str(self.x)+","+str(self.y)+","+str(self.z)
+        return str(self.x)+","+str(self.y)+","+str(self.z)+","+str(self.w)
+
+@dataclass
+class Vector3:
+    x = 0
+    y = 0
+    z = 0
 
 @dataclass
 class FnvHash:

@@ -1,7 +1,7 @@
 
 import sys,os,ast
 sys.path.append(os.getcwd()+"/src")
-import gf, Util
+import gf, Util,SQL
 from UI import Window
 from bytechomp import Reader, dataclass, Annotated, serialize
 import multiprocessing as mp
@@ -33,4 +33,5 @@ if __name__ == "__main__":
     except FileExistsError:
         u=1
     root=Window(Util.Cwd,Util.PackageCache)
+    SQL.InitDB(Util.Cwd)
     root.MainWindow()

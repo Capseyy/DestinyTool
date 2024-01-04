@@ -1,5 +1,5 @@
 from dataclasses import dataclass, fields, field
-import os,sys,Package,binascii
+import os,sys,Package,binascii,SQL,Pickle
 from bytechomp import Reader, dataclass, Annotated, serialize
 import multiprocessing as mp
 from common import *
@@ -31,11 +31,47 @@ class SStringBank: #F1998080
     StringMetaData: TablePointer2
     Start=None
 
-
+def FindDevStrings(Ent,FileName,PackageCache):
+    FileStrings=[]
+    while True:
+        Check=binascii.hexlify(bytes(Ent.read(4))).decode()
+        if Check == "65008080":
+            Ent.seek(Ent.tell()+8)
+            while True:
+                tempBuffer=[]
+                while True:
+                    Val=binascii.hexlify(bytes(Ent.read(1))).decode()
+                    if Val == "00":
+                        String=binascii.unhexlify("".join(tempBuffer)).decode()
+                        break
+                    tempBuffer.append(Val)
+                FileStrings.append([gf.FNVString(String),String])
+                EndCheck=binascii.hexlify(bytes(Ent.read(1))).decode()
+                if EndCheck == "":
+                    break
+                else:
+                    Ent.seek(Ent.tell()-1)
+        elif Check == "":
+            break
+    return FileStrings
+def FnvGen():
+    t_pool = mp.Pool(mp.cpu_count())
+    import Util
+    FnvDict={}
+    _args = [(Ent[1],Ent[0],Util.PackageCache) for Ent in Package.GetAllBungieFiles(Util.PackageCache,Util.path)]
+    result=t_pool.starmap_async(FindDevStrings, _args)
+    StringDB=[]
+    for value in result.get():
+        for v in value:
+            StringDB.append(v)
+    for entry in StringDB:
+        FnvDict[int(entry[0])] = entry[1]
+    Pickle.WritePickle(FnvDict,"FNVs",Util.Cwd)
 
 def StringGen():
     t_pool = mp.Pool(mp.cpu_count())
     import Util
+    StringDict={}
     _args = [(Ent[1],Ent[0],Util.PackageCache) for Ent in Package.GetFilesWithReference(Util.PackageCache,0x808099ef,Util.path)]
     result=t_pool.starmap_async(ProcessStrings, _args)
     StringDB=[]
@@ -48,8 +84,11 @@ def StringGen():
             file.write(str(" // ".join(entry))+"\n")
         except UnicodeEncodeError:
             file.write(str(entry[0])+" // "+str(entry[1]+" // ?\n"))
-            continue
+        else:
+            StringDict[int(entry[1])] = entry[2]
     file.close()
+    Pickle.WritePickle(StringDict,"Strings",Util.Cwd)
+
 
 def ProcessStrings(Ent,FileName,PackageCache): #idk just need 2 params
     reader = Reader[SStringContainer]().allocate()

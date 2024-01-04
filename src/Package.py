@@ -478,6 +478,9 @@ class Package:
         ##print(str(block_offset)+" - "+str(block_count))
         last_block_id = current_block_id + block_count
         file_buffer = b''  # string of length entry.Size
+        if self.Output == True:
+            Outfile=open(f'{custom_direc}/{entry.FileName.upper()}'+".bin", 'wb')
+            DataCount=entry.FileSize
         while current_block_id <= last_block_id:
             current_block = self.block_table.Entries[current_block_id]
             if current_block.PatchID not in self.all_patch_ids:
@@ -494,10 +497,26 @@ class Package:
                 current_block_bin = self.decompress_block(current_block_bin)
             if current_block_id == entry.StartingBlock:
                 file_buffer = current_block_bin[block_offset:]
+                if self.Output == True:
+                    if DataCount < self.BLOCK_SIZE:
+                        Outfile.write(file_buffer[:DataCount])
+                    else:
+                        Outfile.write(file_buffer)
+                        DataCount-=len(file_buffer)
+                    
             else:
-                file_buffer += current_block_bin
+                if self.Output == True:
+                    if DataCount < self.BLOCK_SIZE:
+                        Outfile.write(current_block_bin[:DataCount])
+                    else:
+                        Outfile.write(current_block_bin)
+                    DataCount-=len(current_block_bin)
+                else:
+                    file_buffer = file_buffer+current_block_bin
             ###print(file_buffer)
             current_block_id += 1
+        if self.Output == True:
+            Outfile.close()
         return file_buffer[:entry.FileSize]
 
         
@@ -555,6 +574,7 @@ class Package:
                 if current_block.Flags & 0x1:
                     # ##print(f'Decompressing block {current_block.ID}')
                     current_block_bin = self.decompress_block(current_block_bin)
+                    
                 if current_block_id == entry.StartingBlock:
                     file_buffer = current_block_bin[block_offset:]
                 else:
@@ -611,7 +631,7 @@ def ReturnSeek(path, custom_direc,package,entry):
     ###print(single_pkgs.items())   
     for pkg, pkg_full in single_pkgs.items():
         pkg = Package(f'{path}/{pkg_full}',entrytoget,True)
-        pkg.extract_package(custom_direc,entrytoget,False,extract=True)
+        pkg.extract_package(custom_direc,entrytoget,False,extract=False)
     Data=binascii.hexlify(DataToWrite).decode()
     return Data
 def unpack_entry(path, custom_direc,package,entry):
@@ -625,7 +645,7 @@ def unpack_entry(path, custom_direc,package,entry):
     ###print(single_pkgs.items())   
     for pkg, pkg_full in single_pkgs.items():
         pkg = Package(f'{path}/{pkg_full}',entrytoget,True)
-        Data=pkg.extract_package(custom_direc,entrytoget,False,extract=True)
+        Data=pkg.extract_package(custom_direc,entrytoget,False,extract=False)
     return Data
 def unpack_entry_ext(path, custom_direc,package,entry):
     i=0
@@ -646,7 +666,7 @@ def GetTypes(path, custom_direc,package,entry):
     single_pkgs[package[:-6]] = package
     for pkg, pkg_full in single_pkgs.items():
         pkg = Package(f'{path}/{pkg_full}',entrytoget,False)
-        pkg.extract_package(custom_direc,entrytoget,False,extract=True)
+        pkg.extract_package(custom_direc,entrytoget,False,extract=False)
     return DataToWrite
 
 def GetFileData(Hash,PackageCache):
@@ -658,6 +678,15 @@ def GetFileData(Hash,PackageCache):
     ent=gf.Hex_String(gf.Entry_ID(Hash))
     Data=unpack_entry(Util.path,os.getcwd(),Package,ent)
     return Data
+
+def DumpTag(Hash,PackageCache):
+    import Util
+    Hash=ast.literal_eval("0x"+gf.stripZeros(gf.Flip(Hash.get())))
+    pkg=gf.Hex_String(gf.Package_ID(Hash))
+    temp=ast.literal_eval("0x"+gf.stripZeros(pkg))
+    Package=PackageCache[temp]
+    ent=gf.Hex_String(gf.Entry_ID(Hash))
+    Data=unpack_entry_ext(Util.path,os.getcwd(),Package,ent)
 
 def GetFilesWithReference(PackageCache,Reference,Path):
     import Util
@@ -680,6 +709,28 @@ def GetFilesWithReference(PackageCache,Reference,Path):
                 count+=1
     return Files
 
+
+def GetAllBungieFiles(PackageCache,Path):
+    AllEntriesWithType=[]
+    t_pool = mp.Pool(mp.cpu_count())
+    _args = [(V[1],Path,[8,16],[]) for V in PackageCache.items()]
+    result=t_pool.starmap_async(SelectTypeSearch, _args)
+    for value in result.get():
+        print(value)
+        if value[0][1] != []:
+            AllEntriesWithType.append(value[0])
+    _args = [(Package[0],Package[1],Util.path) for Package in AllEntriesWithType]
+    Files=[]
+    result=t_pool.starmap_async(GatherSelectEntries, _args)
+    count=0
+    for value in result.get():
+        for val in value:
+            for test in val:
+                Files.append([test[0],io.BytesIO(test[1])])
+                count+=1
+    print("got files")
+    return Files
+
 def GetPackageClass(Package,Path):
     reader = Reader[Header]().allocate()
     fp=open(Path+"/"+Package,"rb")
@@ -693,7 +744,14 @@ def SearchEntryTable(Package,Path,Reference):
     EntryList=PkgHeader.ReadEntryTable(Buffer,Entry,Reference)   
     AllEntriesWithType.append([Package,EntryList])
     return AllEntriesWithType
-    
+
+def SelectTypeSearch(Package,Path,Types,SubTypes):
+    AllEntriesWithType=[]
+    PkgHeader,Buffer = GetPackageClass(Package,Path)
+    EntryList=PkgHeader.GetSelectTypes(Buffer,Entry,Types,SubTypes) 
+    AllEntriesWithType.append([Package,EntryList])
+    return AllEntriesWithType
+
 
 def GatherSelectEntries(package,Entiries,path):
     single_pkgs = dict()
@@ -779,6 +837,10 @@ class Entry:
     EntryC: U32
     EntryD: U32
     Start=None
+    def GetTypes(self):
+        file_subtype = (self.EntryB >> 6) & 0x7
+        file_type = (self.EntryB >> 9) & 0x7F
+        return file_type,file_subtype
 
 @dataclass
 class Header:
@@ -808,6 +870,22 @@ class Header:
                 TableEntry=reader.build()
                 if TableEntry.Tag == Reference:
                     TableData.append(j)
+        return TableData
+    def GetSelectTypes(self,Buffer,Struct,Types,SubTypes):
+        TableData=[]
+        if self.EntryTableOffset != 0:
+            Buffer.seek(self.EntryTableOffset.Offset)
+            for j in range(self.EntryCount):
+                reader = Reader[Struct]().allocate()
+                reader.feed(Buffer.read(Struct.Length))
+                TableEntry=reader.build()
+                Type,Subtype=TableEntry.GetTypes()
+                if Type in Types:
+                    if SubTypes != []:
+                        if Subtype in SubTypes:
+                            TableData.append(j)
+                    else:
+                        TableData.append(j)
         return TableData
         
     def ReadNamedTags(self,Buffer,Struct):

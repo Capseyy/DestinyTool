@@ -92,7 +92,7 @@ def GetEncounterList(Window,input,ActList):
 
 def ExtractEncounter(combo_box,DevNameDict,PackageCache):
     import Util
-    LoadzoneWorldIDs,EntitiesToRip=ExtractLoadzoneEntities()
+    LoadzoneWorldIDs,EntitiesToRip=ExtractLoadzoneEntities("")
     t_pool = mp.Pool(mp.cpu_count())
     TagsToParse=DevNameDict[combo_box.get()]
     DataToProcess=[]
@@ -112,18 +112,21 @@ def ExtractEncounter(combo_box,DevNameDict,PackageCache):
                 Name=ActivityDict[Entry.GroupFnv.Hash]
             except KeyError:
                 Name=""
-            DataTables.append(Entry.DataTable)
+            DataTables.append([Entry.DataTable,Entry.GroupWorldID,Entry.DefaultRotation,Entry.DefaultTranslation])
     _args = [(Entry,ActivityDict,PackageCache,Util.Cwd,Util.H64Data) for Entry in DataTables]
     result=t_pool.starmap_async(OutputDataTable, _args)
     for value in result.get():
-        try:
-            EntitiesToRip[value[0].Hash]
-        except KeyError:
-            EntitiesToRip[value[0].Hash] = value[0]
+        for v in value[0]:
+            try:
+                EntitiesToRip[v.Hash]
+            except KeyError:
+                EntitiesToRip[v.Hash] = v
         for wid,vecs in value[1].items():
             LoadzoneWorldIDs[wid] = vecs
+    print(EntitiesToRip)
     _args = [(Entity,PackageCache) for Hash,Entity in EntitiesToRip.items()]
     result=t_pool.starmap_async(ExtractEntity, _args)
+    u=1
 
              
 
@@ -178,8 +181,34 @@ def ParseEntityFile(Tag,PackageCache):
             else:
                 StringDict[Mapping.WorldID]=String
         Data.StringDict=StringDict
+    elif ResourceType == 0x80808cf8: #WID Instancer 3
+        Resource=EntityResource.Resource0x18.ReadStruct(EntityResourceBuffer,Unk80808CF8,0x18)
+        StringDict=EntityResource.GenerateFnvDict(PackageCache)
+        Data.GroupFnv=Resource.GlobalFnv
+        Data.GroupWorldID=Resource.GlobalWorldID
+        MappedWorldID=Resource.WorldIDTable.ReadStruct(EntityResourceBuffer,Unk80809905,Resource.Start+0x60)
+        for Mapping in MappedWorldID:
+            try:
+                String=StringDict[Mapping.Fnv]
+            except KeyError:
+                u=1
+            else:
+                StringDict[Mapping.WorldID]=String
+        Data.StringDict=StringDict
+    elif ResourceType == 0x80808ce5:   #HxkResource
+        Resource=EntityResource.Resource0x18.ReadStruct(EntityResourceBuffer,Unk80808CE5,0x18)
+        HavokEntryTable=Resource.HavokEntryTable.ReadStruct(EntityResourceBuffer,Unk80809956,Resource.Start+0x70)
+        Data.GroupFnv=Resource.GlobalFnv
+        Data.GroupWorldID=Resource.GlobalWorldID
+        Data.DefaultRotation=Resource.GlobalRotation
+        Data.DefaultTranslation=Resource.GlobalTranslation
+        for Entry in HavokEntryTable:
+            EntryType=Entry.AttributeOffset.GetType(EntityResourceBuffer,Entry.Start+0x10)
+            if EntryType == 0x80808cc4:
+                EntryClass=Entry.AttributeOffset.ReadStruct(EntityResourceBuffer,Unk80808CC4,Entry.Start+0x10)
+                Data.DataTable = EntryClass.DataTable
     else:
-        print("Not implemented act res type: "+str(hex(ResourceType)))
+        print("Not implemented act res type: "+str(hex(ResourceType))+" in : "+str(Parent.EntityResource.Hash))
     return Data
 
 
@@ -197,6 +226,67 @@ class InstanceData:
     FAPlacements=[]
     ImportedBuffEntities=[]
     DeviceMappings=[]
+
+@dataclass
+class Unk80808CC4:
+    Start=None
+    Length = 0x38
+    SelfRef: TagHash
+    Unk04: Annotated[list[U32], 5]
+    DataTable: TagHash
+
+
+@dataclass
+class Unk80808CF8:
+    Start=None
+    Length = 0x98
+    Start= None
+    Unk0: TagHash #Self Reference
+    Annotated[list[U32], 3]
+    DestinationString: StringHash
+    Unk14: U32
+    BubbleString: StringHash
+    Unk1C: U32
+    PhaseHash1: U32
+    PhaseHash2: U32
+    GlobalFnv: FnvHash
+    Unk2C: U32
+    GlobalWorldID: U64
+    Unk38: U32
+    Unk3999: TagHash
+    Unk40: I64
+    Unk239B: TagHash
+    Unk4C: Annotated[list[U32], 3]
+    WorldIDTable: TablePointer2
+
+
+@dataclass
+class Unk80808CE5:
+    Start=None
+    Length = 0xF0
+    Start= None
+    Unk0: TagHash #Self Reference
+    Unk04: Annotated[list[U32], 3]
+    DestinationString: StringHash
+    Unk14: U32
+    BubbleString: StringHash
+    Unk1C: U32
+    PhaseHash1: U32
+    PhaseHash2: U32
+    GlobalFnv: FnvHash
+    Unk2C: U32
+    GlobalWorldID: U64
+    Unk38: U32
+    Unk3999: TagHash
+    Unk40: I64
+    Unk239B: TagHash
+    Unk4C: Annotated[list[U32], 7]
+    HavokEntryTable: TablePointer2
+    Unk1699: TagHash
+    Unk7C: U32
+    GlobalRotation: Vector4
+    GlobalTranslation: Vector4
+    
 
 
 
