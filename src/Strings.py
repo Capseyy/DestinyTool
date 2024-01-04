@@ -1,5 +1,5 @@
 from dataclasses import dataclass, fields, field
-import os,sys,Package,binascii,SQL,Pickle
+import os,sys,Package,binascii,Pickle
 from bytechomp import Reader, dataclass, Annotated, serialize
 import multiprocessing as mp
 from common import *

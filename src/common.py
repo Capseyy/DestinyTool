@@ -1,7 +1,7 @@
 from bytechomp import Reader, dataclass, Annotated, serialize
 import multiprocessing as mp
 from dataclasses import dataclass, fields, field
-import gf,Package,io,binascii,ast,SQL
+import gf,Package,io,binascii,ast
 from bytechomp.datatypes import (
     U8,  # 8-bit unsigned integer
     U16,  # 16-bit unsigned integer
